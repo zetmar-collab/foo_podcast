@@ -2,11 +2,14 @@
 #include <atlctrls.h>
 #include <libPPUI/win32_op.h>
 #include <helpers/BumpableElem.h>
+#include <helpers/DarkMode.h>
 #include <vector>
 #include <algorithm>
 #include "model.h"
 #include "library_service.h"
 #include "input_dialog.h"
+#include "config.h"
+#include "panel_colors.h"
 
 namespace {
 
@@ -48,7 +51,14 @@ namespace {
 		DECLARE_WND_CLASS_EX(TEXT("{6B2C9A4E-1F3D-4E8A-9C5B-7D2A8F114455}"), CS_DBLCLKS, (-1));
 
 		CPodcastPanel(ui_element_config::ptr config, ui_element_instance_callback_ptr p_callback)
-			: m_callback(p_callback), m_config(config) {}
+			: m_callback(p_callback), m_config(config) {
+			g_instances().push_back(this);
+		}
+
+		~CPodcastPanel() {
+			auto& v = g_instances();
+			v.erase(std::remove(v.begin(), v.end(), this), v.end());
+		}
 
 		void initialize_window(HWND parent) { WIN32_OP(Create(parent) != NULL); }
 		HWND get_wnd() { return *this; }
@@ -62,8 +72,31 @@ namespace {
 		static const char* g_get_description() { return "Podcast subscription library: import/export OPML, add feeds by URL, play and track listened episodes."; }
 		void notify(const GUID& p_what, t_size, const void*, t_size) {
 			if (p_what == ui_element_notify_colors_changed || p_what == ui_element_notify_font_changed) {
+				ApplyColors();
 				Invalidate();
 			}
+		}
+
+		void ApplyColors() {
+			if (!m_tree.IsWindow()) return;
+			if (podcast_cfg::color_mode.get() == podcast_cfg::color_mode_custom) {
+				m_dark.SetDark(false);
+				COLORREF bg = (COLORREF)podcast_cfg::custom_bg_color.get();
+				COLORREF text = (COLORREF)podcast_cfg::custom_text_color.get();
+				m_tree.SetBkColor(bg);
+				m_tree.SetTextColor(text);
+			} else {
+				bool dark = m_callback.is_valid() && fb2k::isDarkMode();
+				m_dark.SetDark(dark);
+				m_tree.SetBkColor(m_callback->query_std_color(ui_color_background));
+				m_tree.SetTextColor(m_callback->query_std_color(ui_color_text));
+			}
+			m_tree.Invalidate();
+		}
+
+		static std::vector<CPodcastPanel*>& g_instances() {
+			static std::vector<CPodcastPanel*> v;
+			return v;
 		}
 
 		BEGIN_MSG_MAP_EX(CPodcastPanel)
@@ -80,6 +113,8 @@ namespace {
 			m_tree.Create(m_hWnd, rc, nullptr,
 				WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
 				0, 1);
+			m_dark.AddDialogWithControls(m_hWnd);
+			ApplyColors();
 			RebuildTree();
 			return 0;
 		}
@@ -333,6 +368,7 @@ namespace {
 		std::vector<NodeData*> m_nodeData;
 
 		ui_element_config::ptr m_config;
+		fb2k::CDarkModeHooks m_dark;
 	protected:
 		const ui_element_instance_callback_ptr m_callback;
 	};
@@ -340,4 +376,10 @@ namespace {
 	class ui_element_podcast_impl : public ui_element_impl_withpopup<CPodcastPanel> {};
 	static service_factory_single_t<ui_element_podcast_impl> g_ui_element_podcast_impl_factory;
 
+}
+
+void RefreshAllPodcastPanelColors() {
+	for (auto* p : CPodcastPanel::g_instances()) {
+		p->ApplyColors();
+	}
 }

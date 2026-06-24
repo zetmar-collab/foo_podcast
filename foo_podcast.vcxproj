@@ -92,6 +92,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="config.cpp" />
     <ClCompile Include="model.cpp" />
     <ClCompile Include="xml_util.cpp" />
     <ClCompile Include="rss.cpp" />
@@ -99,6 +100,7 @@
     <ClCompile Include="http_fetch.cpp" />
     <ClCompile Include="library_service.cpp" />
     <ClCompile Include="podcast_panel.cpp" />
+    <ClCompile Include="preferences.cpp" />
     <ClCompile Include="input_dialog.cpp" />
     <ClCompile Include="PCH.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -106,6 +108,8 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="config.h" />
+    <ClInclude Include="panel_colors.h" />
     <ClInclude Include="model.h" />
     <ClInclude Include="xml_util.h" />
     <ClInclude Include="rss.h" />
