@@ -1,8 +1,10 @@
 #include "stdafx.h"
+#include <windowsx.h>
 #include <atlctrls.h>
 #include <libPPUI/win32_op.h>
 #include <helpers/BumpableElem.h>
 #include <helpers/DarkMode.h>
+#include <SDK/file_info_impl.h>
 #include <vector>
 #include <algorithm>
 #include "model.h"
@@ -25,6 +27,8 @@ namespace {
 		ID_REFRESH_CHANNEL,
 		ID_REMOVE_CHANNEL,
 		ID_PLAY,
+		ID_PLAY_ALL,
+		ID_ADD_CHECKED_TO_PODCASTY,
 		ID_TOGGLE_LISTENED,
 		ID_SORT_DATE_DESC,
 		ID_SORT_DATE_ASC,
@@ -105,13 +109,15 @@ namespace {
 			MSG_WM_SIZE(OnSize)
 			MSG_WM_CONTEXTMENU(OnContextMenu)
 			NOTIFY_CODE_HANDLER_EX(NM_DBLCLK, OnTreeDblClk)
+			NOTIFY_CODE_HANDLER_EX(NM_CLICK, OnTreeClick)
+			MESSAGE_HANDLER_EX(WM_USER + 1, OnCheckboxSettled)
 		END_MSG_MAP()
 
 	private:
 		LRESULT OnCreate(LPCREATESTRUCT) {
 			CRect rc; GetClientRect(&rc);
 			m_tree.Create(m_hWnd, rc, nullptr,
-				WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
+				WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_CHECKBOXES,
 				0, 1);
 			m_dark.AddDialogWithControls(m_hWnd);
 			ApplyColors();
@@ -127,8 +133,28 @@ namespace {
 			if (m_tree.IsWindow()) m_tree.MoveWindow(0, 0, size.cx, size.cy);
 		}
 
+		LRESULT OnTreeClick(LPNMHDR) {
+			DWORD pos = GetMessagePos();
+			CPoint pt(GET_X_LPARAM(pos), GET_Y_LPARAM(pos));
+			m_tree.ScreenToClient(&pt);
+			UINT flags = 0;
+			HTREEITEM hit = m_tree.HitTest(pt, &flags);
+			if (hit && (flags & TVHT_ONITEMSTATEICON)) {
+				NodeData* node = (NodeData*)m_tree.GetItemData(hit);
+				if (node && !node->isChannel) PostMessage(WM_USER + 1, 0, (LPARAM)hit);
+			}
+			return 0;
+		}
+
+		LRESULT OnCheckboxSettled(UINT, WPARAM, LPARAM lParam) {
+			UpdateEpisodeLabel((HTREEITEM)lParam);
+			return 0;
+		}
+
 		LRESULT OnTreeDblClk(LPNMHDR) {
-			PlaySelected();
+			NodeData* node = GetSelectedNode();
+			if (node && node->isChannel) PlayChannelAll();
+			else PlaySelected();
 			return 0;
 		}
 
@@ -163,6 +189,7 @@ namespace {
 				HTREEITEM chItem = m_tree.InsertItem(labelW.get_ptr(), TVI_ROOT, TVI_LAST);
 				NodeData* chData = new NodeData{ true, chIdx, 0 };
 				m_nodeData.push_back(chData);
+				m_tree.SetCheckState(chItem, FALSE);
 				m_tree.SetItemData(chItem, (DWORD_PTR)chData);
 
 				std::vector<t_size> epOrder;
@@ -179,16 +206,12 @@ namespace {
 
 				for (t_size epIdx : epOrder) {
 					const podcast::Episode& ep = ch.episodes[epIdx];
-					pfc::string8 epLabel = ep.listened ? "[x] " : "[ ] ";
-					pfc::string8 date = FormatDate(ep.pubDate);
-					if (!date.is_empty()) { epLabel << date << "  "; }
-					epLabel << ep.title;
-
-					pfc::stringcvt::string_wide_from_utf8 epLabelW(epLabel.get_ptr());
+					pfc::stringcvt::string_wide_from_utf8 epLabelW(BuildEpisodeLabel(ep, false).get_ptr());
 					HTREEITEM epItem = m_tree.InsertItem(epLabelW.get_ptr(), chItem, TVI_LAST);
 					NodeData* epData = new NodeData{ false, chIdx, epIdx };
 					m_nodeData.push_back(epData);
 					m_tree.SetItemData(epItem, (DWORD_PTR)epData);
+					m_tree.SetCheckState(epItem, FALSE);
 				}
 
 				m_tree.Expand(chItem, TVE_EXPAND);
@@ -204,6 +227,57 @@ namespace {
 			return (NodeData*)m_tree.GetItemData(sel);
 		}
 
+		//! Builds an episode's tree label. The "queued" marker is plain text rather
+		//! than relying on the native checkbox glyph, which can be hard to see
+		//! against custom panel colors.
+		static pfc::string8 BuildEpisodeLabel(const podcast::Episode& ep, bool checked) {
+			pfc::string8 label = checked ? "[+] " : (ep.listened ? "[x] " : "[ ] ");
+			pfc::string8 date = FormatDate(ep.pubDate);
+			if (!date.is_empty()) { label << date << "  "; }
+			label << ep.title;
+			return label;
+		}
+
+		void UpdateEpisodeLabel(HTREEITEM epItem) {
+			NodeData* node = (NodeData*)m_tree.GetItemData(epItem);
+			if (!node || node->isChannel) return;
+			podcast::Library& lib = podcast::GetLibrary();
+			if (node->channelIndex >= lib.channels.get_count()) return;
+			podcast::Channel& ch = lib.channels[node->channelIndex];
+			if (node->episodeIndex >= ch.episodes.get_count()) return;
+			const podcast::Episode& ep = ch.episodes[node->episodeIndex];
+			bool checked = m_tree.GetCheckState(epItem) != 0;
+			pfc::stringcvt::string_wide_from_utf8 labelW(BuildEpisodeLabel(ep, checked).get_ptr());
+			m_tree.SetItemText(epItem, labelW.get_ptr());
+		}
+
+		static t_size GetOrCreatePlaylist(const char* name) {
+			static_api_ptr_t<playlist_manager> pm;
+			return pm->find_or_create_playlist(name, strlen(name));
+		}
+
+		//! Builds metadb handles for the given episodes and forces their displayed
+		//! title (and album/length) to the feed's own data, so playlists show the
+		//! episode title instead of a filename guessed from the stream URL.
+		static metadb_handle_list BuildEpisodeHandles(const std::vector<const podcast::Episode*>& eps, const char* channelTitle) {
+			static_api_ptr_t<metadb> mdb;
+			static_api_ptr_t<metadb_io_v2> io;
+			metadb_handle_list handles;
+			metadb_hint_list::ptr hints = io->create_hint_list();
+			for (const podcast::Episode* ep : eps) {
+				if (ep->url.is_empty()) continue;
+				metadb_handle_ptr h = mdb->handle_create(make_playable_location(ep->url.get_ptr(), 0));
+				file_info_impl info;
+				info.meta_set("TITLE", ep->title.is_empty() ? "(untitled episode)" : ep->title.get_ptr());
+				if (channelTitle && *channelTitle) info.meta_set("ALBUM", channelTitle);
+				if (ep->durationSeconds > 0) info.set_length((double)ep->durationSeconds);
+				hints->add_hint(h, info, filestats_invalid, true);
+				handles.add_item(h);
+			}
+			hints->on_done();
+			return handles;
+		}
+
 		void PlaySelected() {
 			NodeData* node = GetSelectedNode();
 			if (!node || node->isChannel) return;
@@ -214,14 +288,74 @@ namespace {
 			const podcast::Episode& ep = ch.episodes[node->episodeIndex];
 			if (ep.url.is_empty()) return;
 
+			std::vector<const podcast::Episode*> eps{ &ep };
+			metadb_handle_list handles = BuildEpisodeHandles(eps, ch.title.get_ptr());
+			if (handles.get_count() == 0) return;
+
 			static_api_ptr_t<playlist_manager> pm;
-			pfc::string8 plName = ep.title.is_empty() ? pfc::string8("Podcast") : ep.title;
-			t_size playlistIdx = pm->create_playlist(plName.get_ptr(), plName.length(), pm->get_playlist_count());
+			t_size playlistIdx = GetOrCreatePlaylist("Podcasty");
 			pm->set_active_playlist(playlistIdx);
-			pfc::list_t<const char*> paths;
-			paths.add_item(ep.url.get_ptr());
-			pm->playlist_add_locations(playlistIdx, paths, false, core_api::get_main_window());
-			pm->playlist_execute_default_action(playlistIdx, 0);
+			t_size newItemIdx = pm->playlist_get_item_count(playlistIdx);
+			pm->playlist_add_items(playlistIdx, handles, pfc::bit_array_false());
+			pm->playlist_execute_default_action(playlistIdx, newItemIdx);
+		}
+
+		void PlayChannelAll() {
+			NodeData* node = GetSelectedNode();
+			if (!node || !node->isChannel) return;
+			podcast::Library& lib = podcast::GetLibrary();
+			if (node->channelIndex >= lib.channels.get_count()) return;
+			podcast::Channel& ch = lib.channels[node->channelIndex];
+			if (ch.episodes.get_count() == 0) return;
+
+			std::vector<const podcast::Episode*> eps;
+			for (t_size i = 0; i < ch.episodes.get_count(); ++i) eps.push_back(&ch.episodes[i]);
+			metadb_handle_list handles = BuildEpisodeHandles(eps, ch.title.get_ptr());
+			if (handles.get_count() == 0) return;
+
+			static_api_ptr_t<playlist_manager> pm;
+			t_size playlistIdx = GetOrCreatePlaylist(ch.title.is_empty() ? "Podcasty" : ch.title.get_ptr());
+			pm->set_active_playlist(playlistIdx);
+			t_size firstNewIdx = pm->playlist_get_item_count(playlistIdx);
+			pm->playlist_add_items(playlistIdx, handles, pfc::bit_array_false());
+			pm->playlist_execute_default_action(playlistIdx, firstNewIdx);
+		}
+
+		void AddCheckedEpisodesToPodcasty() {
+			podcast::Library& lib = podcast::GetLibrary();
+			std::vector<const podcast::Episode*> eps;
+			std::vector<HTREEITEM> checkedItems;
+
+			for (HTREEITEM chItem = m_tree.GetRootItem(); chItem; chItem = m_tree.GetNextSiblingItem(chItem)) {
+				for (HTREEITEM epItem = m_tree.GetChildItem(chItem); epItem; epItem = m_tree.GetNextSiblingItem(epItem)) {
+					if (!m_tree.GetCheckState(epItem)) continue;
+					NodeData* node = (NodeData*)m_tree.GetItemData(epItem);
+					if (!node || node->isChannel) continue;
+					if (node->channelIndex >= lib.channels.get_count()) continue;
+					podcast::Channel& ch = lib.channels[node->channelIndex];
+					if (node->episodeIndex >= ch.episodes.get_count()) continue;
+					const podcast::Episode& ep = ch.episodes[node->episodeIndex];
+					if (!ep.url.is_empty()) eps.push_back(&ep);
+					checkedItems.push_back(epItem);
+				}
+			}
+
+			if (eps.empty()) {
+				popup_message::g_show("Check at least one episode first (click its checkbox), then use this command to add it to the \"Podcasty\" playlist.", "Podcasts");
+				return;
+			}
+
+			metadb_handle_list handles = BuildEpisodeHandles(eps, nullptr);
+
+			static_api_ptr_t<playlist_manager> pm;
+			t_size playlistIdx = GetOrCreatePlaylist("Podcasty");
+			pm->set_active_playlist(playlistIdx);
+			pm->playlist_add_items(playlistIdx, handles, pfc::bit_array_false());
+
+			for (HTREEITEM item : checkedItems) {
+				m_tree.SetCheckState(item, FALSE);
+				UpdateEpisodeLabel(item);
+			}
 		}
 
 		void ToggleListenedSelected() {
@@ -291,10 +425,14 @@ namespace {
 				menu.AppendMenu(MF_SEPARATOR);
 			}
 			if (node && node->isChannel) {
+				menu.AppendMenu(MF_STRING, ID_PLAY_ALL, _T("Play all episodes"));
 				menu.AppendMenu(MF_STRING, ID_REFRESH_CHANNEL, _T("Refresh this podcast"));
 				menu.AppendMenu(MF_STRING, ID_REMOVE_CHANNEL, _T("Remove podcast"));
 				menu.AppendMenu(MF_SEPARATOR);
 			}
+
+			menu.AppendMenu(MF_STRING, ID_ADD_CHECKED_TO_PODCASTY, _T("Add checked episodes to \"Podcasty\" playlist"));
+			menu.AppendMenu(MF_SEPARATOR);
 
 			CMenu sortMenu;
 			sortMenu.CreatePopupMenu();
@@ -319,6 +457,12 @@ namespace {
 			switch (cmd) {
 			case ID_PLAY:
 				PlaySelected();
+				break;
+			case ID_PLAY_ALL:
+				PlayChannelAll();
+				break;
+			case ID_ADD_CHECKED_TO_PODCASTY:
+				AddCheckedEpisodesToPodcasty();
 				break;
 			case ID_TOGGLE_LISTENED:
 				ToggleListenedSelected();
