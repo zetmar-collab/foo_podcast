@@ -215,11 +215,13 @@ namespace {
 			if (ep.url.is_empty()) return;
 
 			static_api_ptr_t<playlist_manager> pm;
-			t_size idx = pm->activeplaylist_get_item_count();
+			pfc::string8 plName = ep.title.is_empty() ? pfc::string8("Podcast") : ep.title;
+			t_size playlistIdx = pm->create_playlist(plName.get_ptr(), plName.length(), pm->get_playlist_count());
+			pm->set_active_playlist(playlistIdx);
 			pfc::list_t<const char*> paths;
 			paths.add_item(ep.url.get_ptr());
-			pm->activeplaylist_add_locations(paths, false, core_api::get_main_window());
-			pm->activeplaylist_execute_default_action(idx);
+			pm->playlist_add_locations(playlistIdx, paths, false, core_api::get_main_window());
+			pm->playlist_execute_default_action(playlistIdx, 0);
 		}
 
 		void ToggleListenedSelected() {
