@@ -193,15 +193,17 @@ namespace library_service {
 				}
 			},
 			[results, failures, parseError, onDone](fb2k::hwnd_t wnd, bool aborted) {
+				// Even if the import was aborted partway through (or the app is closing),
+				// keep whatever feeds were already fetched instead of discarding them.
+				for (auto& ch : *results) {
+					podcast::GetLibrary().merge_channel(ch);
+				}
+				if (!results->empty()) podcast::GetLibrary().save();
 				if (aborted) return;
 				if (*parseError) {
 					popup_message::g_show("Could not read this file as an OPML podcast list.", "Podcasts: import failed");
 					return;
 				}
-				for (auto& ch : *results) {
-					podcast::GetLibrary().merge_channel(ch);
-				}
-				if (!results->empty()) podcast::GetLibrary().save();
 				if (*failures > 0) {
 					pfc::string8 msg;
 					msg << *failures << " feed(s) listed in the OPML file could not be fetched.";
