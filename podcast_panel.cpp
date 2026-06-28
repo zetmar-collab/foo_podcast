@@ -110,6 +110,7 @@ namespace {
 		BEGIN_MSG_MAP_EX(CPodcastPanel)
 			MSG_WM_CREATE(OnCreate)
 			MSG_WM_DESTROY(OnDestroy)
+			MSG_WM_ERASEBKGND(OnEraseBkgnd)
 			MSG_WM_SIZE(OnSize)
 			MSG_WM_CONTEXTMENU(OnContextMenu)
 			NOTIFY_CODE_HANDLER_EX(NM_DBLCLK, OnTreeDblClk)
@@ -135,6 +136,21 @@ namespace {
 
 		void OnSize(UINT, CSize size) {
 			if (m_tree.IsWindow()) m_tree.MoveWindow(0, 0, size.cx, size.cy);
+		}
+
+		//! Paint the panel's own background with the active (themed or custom)
+		//! background colour. Without this the default window brush shows through
+		//! as a white frame around the tree control when foobar2000 is in dark mode.
+		BOOL OnEraseBkgnd(CDCHandle dc) {
+			CRect rc; GetClientRect(&rc);
+			COLORREF bg;
+			if (podcast_cfg::color_mode.get() == podcast_cfg::color_mode_custom) {
+				bg = (COLORREF)podcast_cfg::custom_bg_color.get();
+			} else {
+				bg = m_callback.is_valid() ? m_callback->query_std_color(ui_color_background) : GetSysColor(COLOR_WINDOW);
+			}
+			dc.FillSolidRect(&rc, bg);
+			return TRUE;
 		}
 
 		LRESULT OnTreeClick(LPNMHDR) {

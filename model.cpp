@@ -46,6 +46,20 @@ namespace podcast {
 	}
 
 	pfc::string8 Library::storage_path() const {
+		// Store the library next to foobar2000's own configuration. This works
+		// for BOTH standard and PORTABLE installs. The previous version hard-coded
+		// %APPDATA%\foobar2000-v2, which does not exist in portable mode - so the
+		// CreateFileW() in save() failed silently and imported subscriptions were
+		// lost on the next launch.
+		pfc::string8 native;
+		if (filesystem::g_get_native_path(core_api::get_profile_path(), native) && !native.is_empty()) {
+			const char* s = native.get_ptr();
+			if (native.length() == 0 || s[native.length() - 1] != '\\') native << "\\";
+			native << "foo_podcast_library.txt";
+			return native;
+		}
+
+		// Fallback (legacy behaviour) if the profile path can't be resolved.
 		wchar_t appData[MAX_PATH];
 		DWORD n = GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH);
 		pfc::string8 p;
