@@ -20,7 +20,8 @@ namespace {
 
 		BEGIN_MSG_MAP_EX(CPodcastPreferences)
 			MSG_WM_INITDIALOG(OnInitDialog)
-			COMMAND_HANDLER_EX(IDC_COLOR_THEME, BN_CLICKED, OnEditChange)
+			COMMAND_HANDLER_EX(IDC_COLOR_THEME,  BN_CLICKED, OnEditChange)
+			COMMAND_HANDLER_EX(IDC_COLOR_SYSTEM, BN_CLICKED, OnEditChange)
 			COMMAND_HANDLER_EX(IDC_COLOR_CUSTOM, BN_CLICKED, OnEditChange)
 			COMMAND_ID_HANDLER_EX(IDC_BG_COLOR_BTN, OnBgColor)
 			COMMAND_ID_HANDLER_EX(IDC_TEXT_COLOR_BTN, OnTextColor)
@@ -37,12 +38,18 @@ namespace {
 		}
 
 		void CheckRadio() {
-			CheckDlgButton(IDC_COLOR_THEME, m_mode == podcast_cfg::color_mode_theme);
+			CheckDlgButton(IDC_COLOR_THEME,  m_mode == podcast_cfg::color_mode_theme);
+			CheckDlgButton(IDC_COLOR_SYSTEM, m_mode == podcast_cfg::color_mode_system);
 			CheckDlgButton(IDC_COLOR_CUSTOM, m_mode == podcast_cfg::color_mode_custom);
 		}
 
 		void OnEditChange(UINT, int, CWindow) {
-			m_mode = IsDlgButtonChecked(IDC_COLOR_CUSTOM) ? podcast_cfg::color_mode_custom : podcast_cfg::color_mode_theme;
+			if (IsDlgButtonChecked(IDC_COLOR_CUSTOM))
+				m_mode = podcast_cfg::color_mode_custom;
+			else if (IsDlgButtonChecked(IDC_COLOR_SYSTEM))
+				m_mode = podcast_cfg::color_mode_system;
+			else
+				m_mode = podcast_cfg::color_mode_theme;
 			OnChanged();
 		}
 

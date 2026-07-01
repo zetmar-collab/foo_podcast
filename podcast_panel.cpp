@@ -83,12 +83,17 @@ namespace {
 
 		void ApplyColors() {
 			if (!m_tree.IsWindow()) return;
-			if (podcast_cfg::color_mode.get() == podcast_cfg::color_mode_custom) {
-				COLORREF bg = (COLORREF)podcast_cfg::custom_bg_color.get();
+			const auto mode = podcast_cfg::color_mode.get();
+			if (mode == podcast_cfg::color_mode_custom) {
+				COLORREF bg   = (COLORREF)podcast_cfg::custom_bg_color.get();
 				COLORREF text = (COLORREF)podcast_cfg::custom_text_color.get();
-				// Match the tree's themed border/scrollbars to the custom background's
-				// brightness, otherwise the native control keeps drawing a light-theme
-				// (white) border around a dark custom background.
+				double luma = 0.299 * GetRValue(bg) + 0.587 * GetGValue(bg) + 0.114 * GetBValue(bg);
+				m_dark.SetDark(luma < 128.0);
+				m_tree.SetBkColor(bg);
+				m_tree.SetTextColor(text);
+			} else if (mode == podcast_cfg::color_mode_system) {
+				COLORREF bg   = GetSysColor(COLOR_WINDOW);
+				COLORREF text = GetSysColor(COLOR_WINDOWTEXT);
 				double luma = 0.299 * GetRValue(bg) + 0.587 * GetGValue(bg) + 0.114 * GetBValue(bg);
 				m_dark.SetDark(luma < 128.0);
 				m_tree.SetBkColor(bg);

@@ -9,3 +9,4 @@
 #define IDC_COLOR_CUSTOM        1011
 #define IDC_BG_COLOR_BTN        1012
 #define IDC_TEXT_COLOR_BTN      1013
+#define IDC_COLOR_SYSTEM        1014
